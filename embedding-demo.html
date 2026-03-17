@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 向量搜索原理 - 生活化通俗版 v6.0</title>
+    <style>
+        :root {
+            --bg: #fff1f2; /* 暖色调背景 */
+            --text: #4a044e;
+            --accent: #db2777; /* Pink */
+            --secondary: #fce7f3;
+            --success: #16a34a;
+            --warning: #ea580c;
+            --info: #0284c7;
+        }
+
+        body {
+            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* 左侧导航 */
+        .sidebar {
+            width: 260px;
+            background: #fff;
+            border-right: 1px solid #fbcfe8;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.05);
+        }
+        .nav-item {
+            padding: 12px 15px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            border-radius: 12px;
+            transition: all 0.3s;
+            color: #831843;
+            font-weight: 500;
+        }
+        .nav-item:hover { background: var(--secondary); }
+        .nav-item.active { background: var(--accent); color: white; box-shadow: 0 4px 10px rgba(219, 39, 119, 0.4); }
+
+        /* 主内容区 */
+        .main {
+            flex: 1;
+            padding: 40px;
+            position: relative;
+            overflow-y: auto;
+            background-color: #fffbfc; /* 极淡的粉白 */
+        }
+
+        .slide { display: none; animation: fadeIn 0.5s; }
+        .slide.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        h1 { font-size: 2.2em; margin-bottom: 10px; color: #831843; }
+        h2 { color: var(--accent); margin-top: 0; }
+        .subtitle { color: #9d174d; font-size: 1.2em; margin-bottom: 30px; opacity: 0.8; }
+
+        /* 卡片样式 */
+        .card {
+            background: #fff;
+            border: 1px solid #fbcfe8;
+            border-radius: 16px;
+            padding: 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 20px rgba(219, 39, 119, 0.05);
+        }
+
+        /* --- 0. 概念解释 (奶茶比喻) --- */
+        .tea-box {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 40px;
+            padding: 30px;
+            background: linear-gradient(135deg, #fdf2f8 0%, #fff 100%);
+            border-radius: 16px;
+            border: 2px dashed #f9a8d4;
+        }
+        .tea-icon { font-size: 4em; margin-bottom: 10px; display: block; }
+        .tea-data { 
+            font-family: monospace; background: #fff; padding: 15px; 
+            border-radius: 8px; border: 1px solid #f472b6; color: #db2777;
+            box-shadow: 0 4px 0 #fbcfe8;
+        }
+
+        /* --- 1. 土豆比喻 --- */
+        .potato-box {
+            display: flex; gap: 20px; justify-content: space-around;
+            text-align: center;
+        }
+        .potato-item {
+            background: #fff7ed; padding: 20px; border-radius: 12px; border: 1px solid #fdba74; flex: 1;
+        }
+
+        /* --- 7. 鱼香肉丝比喻 --- */
+        .food-compare {
+            display: flex; gap: 20px;
+        }
+        .food-item {
+            flex: 1; padding: 20px; border-radius: 12px; text-align: center; border: 2px solid transparent; cursor: pointer;
+        }
+        .food-bad { background: #fef2f2; border-color: #fca5a5; }
+        .food-good { background: #f0fdf4; border-color: #86efac; }
+
+        /* --- 9. 鸡尾酒比喻 --- */
+        .cocktail-container {
+            display: flex; gap: 40px; align-items: center;
+        }
+        .cocktail-glass {
+            width: 100px; height: 160px;
+            border-left: 2px solid #94a3b8; border-right: 2px solid #94a3b8; border-bottom: 4px solid #94a3b8;
+            border-radius: 0 0 20px 20px; position: relative; overflow: hidden; background: #f1f5f9;
+        }
+        .liquid { position: absolute; bottom: 0; width: 100%; transition: height 0.3s, background-color 0.3s; }
+        
+        input[type=range] { width: 100%; accent-color: var(--accent); }
+
+        /* 通用演示组件 */
+        .coord-demo { display: flex; gap: 30px; background: #fff; padding: 20px; border-radius: 12px; align-items: center; border: 1px solid #e2e8f0; }
+        .coord-system { width: 300px; height: 300px; border: 2px solid #cbd5e1; position: relative; background: radial-gradient(#e2e8f0 1px, transparent 1px); background-size: 20px 20px; }
+        .vector-line { position: absolute; bottom: 0; left: 0; height: 3px; transform-origin: 0 50%; }
+        .vector-point { width: 20px; height: 20px; border-radius: 50%; position: absolute; transform: translate(-50%, 50%); cursor: grab; z-index: 10; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+
+        .notes-btn { position: fixed; bottom: 20px; right: 20px; background: var(--accent); color: white; padding: 12px 24px; border-radius: 30px; cursor: pointer; box-shadow: 0 5px 15px rgba(219, 39, 119, 0.4); font-weight: bold; z-index: 100; border: none; font-size: 1em; }
+        .notes-panel { position: fixed; bottom: 90px; right: 20px; width: 350px; background: white; padding: 25px; border-radius: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.15); display: none; border-left: 6px solid var(--accent); z-index: 100; }
+
+        button { background: var(--accent); color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-size: 1em; }
+        button:hover { opacity: 0.9; transform: translateY(-1px); }
+
+    </style>
+</head>
+<body>
+
+<!-- 侧边导航 -->
+<div class="sidebar">
+    <div style="color:#be185d; font-weight:bold; margin-bottom:30px; font-size:1.2em;">🍦 AI 向量通俗版</div>
+    <div class="nav-item active" onclick="showSlide(0)">0. 概念：奶茶配方表</div>
+    <div class="nav-item" onclick="showSlide(1)">1. 识别：土豆与马铃薯</div>
+    <div class="nav-item" onclick="showSlide(2)">2. 对比：老黄历 vs 智能推荐</div>
+    <div class="nav-item" onclick="showSlide(3)">3. 维度：相亲打分表</div>
+    <div class="nav-item" onclick="showSlide(4)">4. 原理：2D坐标演示</div>
+    <div class="nav-item" onclick="showSlide(5)">5. 深度：方向盘 vs 里程表</div>
+    <div class="nav-item" onclick="showSlide(6)">6. 精准度：老板 vs CEO</div>
+    <div class="nav-item" onclick="showSlide(7)">7. 组合词：鱼香肉丝</div>
+    <div class="nav-item" onclick="showSlide(8)">8. 场景：猜你喜欢</div>
+    <div class="nav-item" onclick="showSlide(9)">9. 进阶：调鸡尾酒</div>
+</div>
+
+<!-- 主内容 -->
+<div class="main">
+
+    <!-- Slide 0: 奶茶比喻 -->
+    <div class="slide active">
+        <h1>0. 什么是 Embedding (嵌入)？</h1>
+        <p class="subtitle">通俗理解：给万物贴上“成分表”</p>
+        <div class="card">
+            <p>计算机不懂什么是“霸道总裁”，也不懂什么是“芋泥波波奶茶”。</p>
+            <p>但如果我们把它们拆解成<strong>数字配方</strong>，计算机就懂了！</p>
+            <div class="tea-box">
+                <div style="text-align:center;">
+                    <span class="tea-icon">🥤</span>
+                    <h3>芋泥波波奶茶</h3>
+                    <p>(文字)</p>
+                </div>
+                <div style="font-size:2em; color:#db2777;">➡️ 数字化 ➡️</div>
+                <div style="text-align:center;">
+                    <div class="tea-data">
+                        糖度: 7.0<br>
+                        冰度: 3.0<br>
+                        芋泥: 9.0<br>
+                        茶底: 5.0
+                    </div>
+                    <h3>向量 (Vector)</h3>
+                </div>
+            </div>
+            <p style="margin-top:20px; text-align:center;">这就是 Embedding：<strong>把“文字”变成“配方表”的过程。</strong></p>
+        </div>
+    </div>
+
+    <!-- Slide 1: 土豆比喻 -->
+    <div class="slide">
+        <h1>1. 为什么分开算，它们还认识？</h1>
+        <p class="subtitle">疑惑：标签是分开处理的，为什么知道它们是一伙的？</p>
+        <div class="card">
+            <h3>🥔 生活案例：菜市场的智慧</h3>
+            <div class="potato-box">
+                <div class="potato-item">
+                    <div style="font-size:3em;">🥔</div>
+                    <h3>土豆</h3>
+                    <p>常出现在：酸辣__丝、炖牛腩</p>
+                </div>
+                <div class="potato-item">
+                    <div style="font-size:3em;">🥔</div>
+                    <h3>马铃薯</h3>
+                    <p>常出现在：炸__条、__泥</p>
+                </div>
+                <div class="potato-item" style="opacity:0.5">
+                    <div style="font-size:3em;">🧱</div>
+                    <h3>砖头</h3>
+                    <p>常出现在：盖房子、工地</p>
+                </div>
+            </div>
+            <div style="margin-top:20px; background:#fff1f2; padding:15px; border-radius:10px;">
+                <p><strong>AI 的逻辑：</strong> AI 虽然没吃过菜，但它读了几亿个菜谱。</p>
+                <p>它发现<strong>“土豆”</strong>和<strong>“马铃薯”</strong>总是出现在相似的烹饪环境里（都能炸、能炖）。</p>
+                <p>所以，它们的<strong>“配方表（向量）”</strong>几乎一模一样！</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 2: 对比 -->
+    <div class="slide">
+        <h1>2. 新旧技术对比</h1>
+        <div class="card">
+            <h3>🛍️ 场景：你想买“保暖”的衣服</h3>
+            <div style="display:flex; gap:20px; margin-top:20px;">
+                <div style="flex:1; background:#fef2f2; padding:20px; border-radius:12px; border:1px solid #fecaca;">
+                    <h3 style="color:#dc2626;">❌ 传统搜索 (关键词)</h3>
+                    <p>你搜：“保暖”</p>
+                    <p>结果：必须衣服名字里带“保暖”二字。</p>
+                    <p><strong>后果：</strong> 漏掉了“羽绒服”、“羊绒衫”。(因为名字里没带保暖)</p>
+                </div>
+                <div style="flex:1; background:#f0fdf4; padding:20px; border-radius:12px; border:1px solid #bbf7d0;">
+                    <h3 style="color:#16a34a;">✅ 向量搜索 (语义)</h3>
+                    <p>你搜：“保暖”</p>
+                    <p>结果：AI 知道 [羽绒服]、[羊绒] 的“配方”里都有 [热量保持] 的成分。</p>
+                    <p><strong>后果：</strong> 全都搜出来了！</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 3: 维度 (相亲) -->
+    <div class="slide">
+        <h1>3. 维度黑盒</h1>
+        <p class="subtitle">疑惑：那一串 1500 个数字到底代表什么？</p>
+        <div class="card">
+            <h3>📋 生活案例：相亲打分表</h3>
+            <p>假设我们把 1500 个维度简化成 3 个我们能看懂的：</p>
+            <div style="display:flex; justify-content:space-around; margin-top:20px;">
+                <div style="text-align:center;">
+                    <div style="height:150px; display:flex; align-items:flex-end; gap:5px; justify-content:center;">
+                        <div style="width:20px; height:90%; background:#db2777;"></div>
+                        <div style="width:20px; height:80%; background:#db2777;"></div>
+                        <div style="width:20px; height:20%; background:#db2777;"></div>
+                    </div>
+                    <p><strong>霸道总裁</strong><br><small>高富 / 高帅 / 脾气差</small></p>
+                </div>
+                <div style="text-align:center;">
+                    <div style="height:150px; display:flex; align-items:flex-end; gap:5px; justify-content:center;">
+                        <div style="width:20px; height:88%; background:#db2777;"></div>
+                        <div style="width:20px; height:82%; background:#db2777;"></div>
+                        <div style="width:20px; height:18%; background:#db2777;"></div>
+                    </div>
+                    <p><strong>豪门继承人</strong><br><small>极度相似！</small></p>
+                </div>
+                <div style="text-align:center;">
+                    <div style="height:150px; display:flex; align-items:flex-end; gap:5px; justify-content:center;">
+                        <div style="width:20px; height:10%; background:#94a3b8;"></div>
+                        <div style="width:20px; height:10%; background:#94a3b8;"></div>
+                        <div style="width:20px; height:90%; background:#94a3b8;"></div>
+                    </div>
+                    <p><strong>暖男备胎</strong><br><small>完全相反</small></p>
+                </div>
+            </div>
+            <p style="margin-top:20px; text-align:center; color:#666;">AI 也是这样：只要“打分趋势”一样，它就认为这俩是一类人。</p>
+        </div>
+    </div>
+
+    <!-- Slide 4: 2D 演示 -->
+    <div class="slide">
+        <h1>4. 原理：2D 坐标演示</h1>
+        <div class="card">
+            <p>试着拖动 <span style="color:#16a34a">● 绿色点</span> 和 <span style="color:#ea580c">● 橙色点</span>。</p>
+            <p>当它们指向<strong>同一个方向</strong>时，相似度最高！</p>
+            <div class="coord-demo">
+                <div class="coord-system" id="coordSystem">
+                    <!-- 简单的坐标系背景线 -->
+                    <div style="position:absolute; bottom:0; left:0; width:100%; height:2px; background:#94a3b8;"></div>
+                    <div style="position:absolute; bottom:0; left:0; width:2px; height:100%; background:#94a3b8;"></div>
+                    
+                    <div class="vector-line" id="lineA" style="background:#16a34a; width:0; transform:rotate(0deg);"></div>
+                    <div class="vector-point" id="pointA" style="background:#16a34a; bottom:150px; left:150px;"></div>
+                    
+                    <div class="vector-line" id="lineB" style="background:#ea580c; width:0; transform:rotate(0deg);"></div>
+                    <div class="vector-point" id="pointB" style="background:#ea580c; bottom:150px; left:150px;"></div>
+                </div>
+                <div style="flex:1; padding-left:20px;">
+                    <h3>当前相似度：</h3>
+                    <div id="simVal" style="font-size:3em; font-weight:bold; color:#16a34a;">0.00</div>
+                    <p>夹角越小，分数越高。</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 5: 深度 (长短) -->
+    <div class="slide">
+        <h1>5. 深度：方向盘 vs 里程表</h1>
+        <p class="subtitle">疑惑：A点(1,1)和B点(100,100)隔那么远，为啥相似？</p>
+        <div class="card">
+            <h3>🚗 生活案例：开车去北京</h3>
+            <div style="display:flex; align-items:center; justify-content:space-between; margin:20px 0;">
+                <div style="text-align:center;">
+                    <div style="font-size:3em;">🏃</div>
+                    <p>刚出发 (走了1公里)<br>方向：正北</p>
+                </div>
+                <div style="font-size:2em; color:#db2777;">VS</div>
+                <div style="text-align:center;">
+                    <div style="font-size:3em;">🏎️</div>
+                    <p>快到了 (走了1000公里)<br>方向：正北</p>
+                </div>
+            </div>
+            <div style="background:#f8fafc; padding:20px; border-radius:12px;">
+                <p><strong>余弦相似度只问：</strong>“你的方向盘是不是打正北？”</p>
+                <p><strong>它不问：</strong>“你的里程表走了多少？”</p>
+                <p>所以，无论是短标签（刚出发）还是长篇小说（跑很远），只要<strong>主题方向</strong>一致，它们就是同类！</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 6: 精准度 -->
+    <div class="slide">
+        <h1>6. 精准度：老板 vs CEO</h1>
+        <div class="card">
+            <h3>🎯 谁是真正的“自己人”？</h3>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <div style="display:flex; align-items:center;">
+                    <div style="width:100px; text-align:right; font-weight:bold; margin-right:10px;">搜 CEO</div>
+                    <div style="flex:1; background:#f1f5f9; height:30px; border-radius:15px; position:relative;">
+                        <div style="position:absolute; left:0; top:0; height:100%; background:#16a34a; width:95%; border-radius:15px;"></div>
+                        <span style="position:absolute; right:10px; color:white; font-size:12px; line-height:30px;">95%</span>
+                    </div>
+                    <div style="width:120px; margin-left:10px;">Company CEO <br><small>(完全包含)</small></div>
+                </div>
+
+                <div style="display:flex; align-items:center;">
+                    <div style="width:100px; text-align:right; font-weight:bold; margin-right:10px;"></div>
+                    <div style="flex:1; background:#f1f5f9; height:30px; border-radius:15px; position:relative;">
+                        <div style="position:absolute; left:0; top:0; height:100%; background:#facc15; width:75%; border-radius:15px;"></div>
+                        <span style="position:absolute; right:10px; color:black; font-size:12px; line-height:30px;">75%</span>
+                    </div>
+                    <div style="width:120px; margin-left:10px;">Boss (老板) <br><small>(太宽泛)</small></div>
+                </div>
+
+                <div style="display:flex; align-items:center;">
+                    <div style="width:100px; text-align:right; font-weight:bold; margin-right:10px;"></div>
+                    <div style="flex:1; background:#f1f5f9; height:30px; border-radius:15px; position:relative;">
+                        <div style="position:absolute; left:0; top:0; height:100%; background:#ef4444; width:5%; border-radius:15px;"></div>
+                        <span style="position:absolute; right:10px; color:black; font-size:12px; line-height:30px;">5%</span>
+                    </div>
+                    <div style="width:120px; margin-left:10px;">香蕉 <br><small>(无关)</small></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 7: 组合词 -->
+    <div class="slide">
+        <h1>7. 组合词：鱼香肉丝</h1>
+        <p class="subtitle">疑惑：针对 "古代女巫"，要不要拆开存？</p>
+        <div class="card">
+            <h3>🍲 菜名里的秘密</h3>
+            <div class="food-compare">
+                <div class="food-item food-bad" onclick="alert('拆开后，可能搜到“红烧鱼”和“炒肉丝”，但唯独不是鱼香肉丝！')">
+                    <div style="font-size:3em;">🐟 + 🥩</div>
+                    <h3>拆开存</h3>
+                    <p>[鱼] + [肉丝]</p>
+                    <p style="color:#dc2626;">错误！老婆饼里没有老婆，鱼香肉丝里没有鱼！拆开意思就变了。</p>
+                </div>
+                <div class="food-item food-good" onclick="alert('正确！这是一个专有名词，代表一种特定的口味。')">
+                    <div style="font-size:3em;">🥘</div>
+                    <h3>整体存</h3>
+                    <p>[鱼香肉丝]</p>
+                    <p style="color:#16a34a;">正确！保留了“特有风味”。</p>
+                </div>
+            </div>
+            <p style="margin-top:20px; text-align:center;">同理：<strong>[古代女巫]</strong> 是一种特定人设。拆成 [古代]+[女巫]，可能会搜出“古代种田文”（因为都有古代）。</p>
+        </div>
+    </div>
+
+    <!-- Slide 8: 场景演示 -->
+    <div class="slide">
+        <h1>8. 场景：猜你喜欢</h1>
+        <div class="card">
+            <h3>📚 以书搜书</h3>
+            <p>如果你喜欢《哈利波特》，系统不会给你推《三国演义》。</p>
+            <div style="display:flex; justify-content:center; align-items:center; gap:20px; margin-top:20px;">
+                <div style="border:2px solid #db2777; padding:15px; border-radius:10px; background:#fff1f2;">
+                    <strong>《哈利波特》</strong><br>
+                    <small>魔法, 学院, 成长</small>
+                </div>
+                <div style="font-size:2em;">➡️</div>
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                    <div id="rec1" style="padding:10px; border:1px solid #ddd; border-radius:8px;">《指环王》 <small>(奇幻, 史诗)</small></div>
+                    <div id="rec2" style="padding:10px; border:1px solid #ddd; border-radius:8px;">《乡村爱情》 <small>(现代, 搞笑)</small></div>
+                </div>
+            </div>
+            <div style="text-align:center; margin-top:20px;">
+                <button onclick="recommend()">计算相似度</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 9: 进阶 (调酒) -->
+    <div class="slide">
+        <h1>9. 进阶：调鸡尾酒 (加权平均)</h1>
+        <p class="subtitle">如何把一本书的多个标签变成一个向量？</p>
+        <div class="card">
+            <div class="cocktail-container">
+                <div style="flex:1;">
+                    <h3>🍸 调制你的小说风味</h3>
+                    <p>我们可以决定哪个标签的味道更重一点。</p>
+                    
+                    <div style="margin-bottom:20px;">
+                        <label>🍋 题材 (古代)：<span id="genreVal">1.0</span></label>
+                        <input type="range" min="0" max="3" step="0.5" value="1.0" id="genreRange" oninput="updateCocktail()">
+                    </div>
+                    
+                    <div>
+                        <label>🍬 人设 (甜宠)：<span id="charVal">1.0</span></label>
+                        <input type="range" min="0" max="3" step="0.5" value="1.0" id="charRange" oninput="updateCocktail()">
+                    </div>
+                </div>
+
+                <div style="flex:1; display:flex; justify-content:center;">
+                    <div class="cocktail-glass">
+                        <div class="liquid" id="liquid" style="height:50%; background:#a855f7;"></div>
+                    </div>
+                </div>
+            </div>
+            <p style="text-align:center; margin-top:10px; font-size:0.9em; color:#666;">
+                当前风味：<span id="flavorText" style="font-weight:bold;">均衡</span>
+            </p>
+        </div>
+    </div>
+
+</div>
+
+<!-- 讲师小抄 -->
+<button class="notes-btn" onclick="toggleNotes()">🎤 讲师小抄</button>
+<div class="notes-panel" id="notesPanel">
+    <h4 style="margin-top:0; color:#db2777;">🗣️ 怎么跟业务部门讲？</h4>
+    <p id="noteContent" style="line-height:1.6; color:#334155;">点击左侧目录，查看对应话术。</p>
+</div>
+
+<script>
+    // --- 核心逻辑 ---
+    const slides = document.querySelectorAll('.slide');
+    const navItems = document.querySelectorAll('.nav-item');
+    const noteContent = document.getElementById('noteContent');
+
+    const notes = [
+        "开场白：Embedding 就是给小说办‘数字身份证’。就像奶茶有糖度冰度配方，小说也有‘霸道度’‘甜宠度’的数字配方。",
+        "重点：用土豆/马铃薯举例。不管叫什么，只要做法（上下文）一样，AI 就知道它们是一回事。解决了我们标签不统一的大麻烦。",
+        "重点：对比关键词搜索的死板（漏掉羽绒服）和向量搜索的智能（懂保暖的含义）。",
+        "重点：相亲打分表。不要管1500个数字是啥，只要打分趋势像，就是一类人。",
+        "重点：演示夹角。拖动点，让它们方向一致。强调：只看方向，不看长短。",
+        "重点：开车去北京。刚出发（短文本）和快到了（长文本），只要方向盘（主题）是一样的，就是同路人。",
+        "重点：亲疏远近。完全包含（Company CEO）最匹配，沾点边（Boss）排后面。AI 自动帮我们做好了排序。",
+        "重点：鱼香肉丝。拆开就没有那个味儿了！所以‘古代女巫’这种专有词，我们要整体喂给 AI。",
+        "重点：以书搜书。喜欢哈利波特的人，通常会喜欢指环王，因为‘配方’很像。",
+        "重点：调鸡尾酒。我们可以手动调整，让‘题材’的味道重一点，或者让‘甜宠’的味道重一点，算出最精准的书本向量。"
+    ];
+
+    function showSlide(index) {
+        slides.forEach(s => s.classList.remove('active'));
+        navItems.forEach(n => n.classList.remove('active'));
+        slides[index].classList.add('active');
+        navItems[index].classList.add('active');
+        noteContent.innerText = notes[index];
+    }
+    showSlide(0);
+
+    function toggleNotes() {
+        const panel = document.getElementById('notesPanel');
+        panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+    }
+
+    // --- Slide 4 逻辑 (2D坐标) ---
+    const pointA = document.getElementById('pointA'); const pointB = document.getElementById('pointB');
+    const lineA = document.getElementById('lineA'); const lineB = document.getElementById('lineB');
+    const system = document.getElementById('coordSystem');
+    let isDragging = null;
+    updateVector('A', 200, 220); updateVector('B', 100, 220);
+
+    function updateVector(target, x, y) {
+        x = Math.max(0, Math.min(300, x)); y = Math.max(0, Math.min(300, y));
+        const point = target === 'A' ? pointA : pointB;
+        point.style.left = x + 'px'; point.style.bottom = y + 'px';
+        const cartX = x; const cartY = y; 
+        const line = target === 'A' ? lineA : lineB;
+        const len = Math.sqrt(cartX*cartX + cartY*cartY);
+        const angle = Math.atan2(cartY, cartX) * 180 / Math.PI;
+        line.style.width = len + 'px'; line.style.transform = `rotate(${-angle}deg)`; line.style.bottom='0px'; line.style.left='0px';
+        point.dataset.x = cartX; point.dataset.y = cartY;
+        calculateSim();
+    }
+    
+    function calculateSim() {
+        const ax = parseFloat(pointA.dataset.x), ay = parseFloat(pointA.dataset.y);
+        const bx = parseFloat(pointB.dataset.x), by = parseFloat(pointB.dataset.y);
+        const dot = ax*bx + ay*by;
+        const magA = Math.sqrt(ax*ax + ay*ay); const magB = Math.sqrt(bx*bx + by*by);
+        if(magA === 0 || magB === 0) return;
+        let cosSim = dot / (magA * magB); cosSim = Math.max(-1, Math.min(1, cosSim));
+        document.getElementById('simVal').innerText = cosSim.toFixed(2);
+        const simEl = document.getElementById('simVal');
+        if(cosSim > 0.9) simEl.style.color = '#16a34a'; else if(cosSim < 0.5) simEl.style.color = '#dc2626'; else simEl.style.color = '#ea580c';
+    }
+
+    system.addEventListener('mousedown', (e) => { if(e.target.classList.contains('vector-point')) isDragging = e.target.id === 'pointA' ? 'A' : 'B'; });
+    window.addEventListener('mouseup', () => isDragging = null);
+    system.addEventListener('mousemove', (e) => {
+        if(!isDragging) return; const rect = system.getBoundingClientRect();
+        updateVector(isDragging, e.clientX - rect.left, rect.bottom - e.clientY);
+    });
+
+    // --- Slide 8 逻辑 ---
+    function recommend() {
+        document.getElementById('rec1').style.background = "#dcfce7";
+        document.getElementById('rec1').style.borderColor = "#16a34a";
+        document.getElementById('rec1').innerHTML += " ✅";
+        document.getElementById('rec2').style.opacity = "0.3";
+    }
+
+    // --- Slide 9 逻辑 (鸡尾酒) ---
+    function updateCocktail() {
+        const g = parseFloat(document.getElementById('genreRange').value);
+        const c = parseFloat(document.getElementById('charRange').value);
+        document.getElementById('genreVal').innerText = g;
+        document.getElementById('charVal').innerText = c;
+        
+        const total = g + c;
+        const ratio = total === 0 ? 0.5 : g / total; 
+        
+        // 颜色插值: 黄色(题材) -> 紫色(人设)
+        // Yellow: 50, Purple: 270
+        const hue = 270 - (ratio * (270 - 50));
+        const height = 40 + ratio * 40;
+
+        const liq = document.getElementById('liquid');
+        liq.style.backgroundColor = `hsl(${hue}, 70%, 60%)`;
+        liq.style.height = height + "%";
+
+        const txt = document.getElementById('flavorText');
+        if(ratio > 0.6) txt.innerText = "🍋 柠檬味重 (题材主导)";
+        else if(ratio < 0.4) txt.innerText = "🍬 糖味重 (人设主导)";
+        else txt.innerText = "🍹 均衡特调";
+    }
+</script>
+
+</body>
+</html>
