@@ -1,0 +1,595 @@
+      
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 向量搜索核心原理 - 团队内训版 v5.0</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --text: #e2e8f0;
+            --accent: #6366f1; /* Indigo */
+            --secondary: #334155;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --info: #0ea5e9;
+            --purple: #a855f7;
+        }
+
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* 左侧导航 */
+        .sidebar {
+            width: 260px;
+            background: rgba(30, 41, 59, 0.95);
+            border-right: 1px solid var(--secondary);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+        .nav-item {
+            padding: 12px 15px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.3s;
+            color: #94a3b8;
+            font-size: 0.9em;
+        }
+        .nav-item:hover { background: var(--secondary); color: white; }
+        .nav-item.active { background: var(--accent); color: white; font-weight: bold; box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4); }
+
+        /* 主内容区 */
+        .main {
+            flex: 1;
+            padding: 40px;
+            position: relative;
+            overflow-y: auto;
+        }
+
+        .slide { display: none; animation: fadeIn 0.5s; }
+        .slide.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        h1 { font-size: 2.2em; margin-bottom: 10px; color: white; }
+        h2 { color: var(--accent); margin-top: 0; }
+        .subtitle { color: #94a3b8; font-size: 1.1em; margin-bottom: 30px; }
+
+        /* 卡片样式 */
+        .card {
+            background: #1e293b;
+            border: 1px solid var(--secondary);
+            border-radius: 12px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        /* --- 0. 概念解释 (NEW STYLE) --- */
+        .concept-box {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 30px;
+            padding: 40px;
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            border-radius: 12px;
+            border: 1px solid var(--secondary);
+        }
+        .concept-icon { font-size: 3em; margin-bottom: 10px; text-align: center; }
+        .arrow-anim { font-size: 2em; color: var(--accent); animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { opacity: 0.5; transform: scale(1); } 50% { opacity: 1; transform: scale(1.2); } 100% { opacity: 0.5; transform: scale(1); } }
+        .data-block { 
+            font-family: 'Courier New', monospace; 
+            background: #000; color: #4ade80; 
+            padding: 15px; border-radius: 6px; 
+            font-size: 0.9em; border: 1px solid #4ade80;
+            box-shadow: 0 0 10px rgba(74, 222, 128, 0.2);
+        }
+
+        /* --- 9. 权重计算模拟器 (NEW) --- */
+        .mixer-container {
+            display: flex;
+            gap: 40px;
+            align-items: center;
+        }
+        .mixer-controls { flex: 1; }
+        .mixer-visual { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+        
+        .slider-group { margin-bottom: 20px; }
+        .slider-label { display: flex; justify-content: space-between; margin-bottom: 5px; font-weight: bold; }
+        input[type=range] { width: 100%; cursor: pointer; accent-color: var(--accent); }
+        
+        .vector-bar-box {
+            width: 100px;
+            height: 200px;
+            background: #334155;
+            border-radius: 8px;
+            position: relative;
+            overflow: hidden;
+            border: 2px solid #475569;
+        }
+        .vector-fill {
+            width: 100%;
+            position: absolute;
+            bottom: 0;
+            transition: height 0.3s, background-color 0.3s;
+        }
+        .vector-val { position: absolute; width: 100%; text-align: center; bottom: 10px; font-weight: bold; text-shadow: 0 0 5px black; z-index: 10; }
+
+        /* --- 深度疑惑：长短演示 --- */
+        .magnitude-demo {
+            display: flex; align-items: center; justify-content: center; height: 300px; background: #0f172a; position: relative; border-radius: 12px; overflow: hidden; border: 1px solid var(--secondary);
+        }
+        .mag-origin { width: 10px; height: 10px; background: white; border-radius: 50%; position: absolute; left: 20px; bottom: 20px; z-index: 10; }
+        .mag-line-long { position: absolute; left: 25px; bottom: 25px; height: 4px; width: 0; background: var(--warning); transform-origin: left center; transform: rotate(-45deg); transition: width 1s ease-out; }
+        .mag-line-short { position: absolute; left: 25px; bottom: 25px; height: 4px; width: 100px; background: var(--success); transform-origin: left center; transform: rotate(-45deg); z-index: 5; }
+        .mag-label { position: absolute; color: white; font-size: 0.9em; pointer-events: none; text-shadow: 0 0 5px black; }
+
+        /* 对比表格 */
+        .vs-container { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .vs-box { padding: 20px; border-radius: 8px; border: 1px solid transparent; }
+        .vs-old { background: rgba(239, 68, 68, 0.1); border-color: var(--danger); }
+        .vs-new { background: rgba(34, 197, 94, 0.1); border-color: var(--success); }
+        .vs-plan-a { background: rgba(168, 85, 247, 0.1); border-color: var(--purple); } /* Plan A style */
+        .vs-plan-b { background: rgba(51, 65, 85, 0.5); border-color: var(--secondary); } /* Plan B style */
+
+        /* 2D 坐标演示器 */
+        .coord-demo { display: flex; gap: 30px; background: #0f172a; padding: 20px; border-radius: 12px; align-items: center; }
+        .coord-system { width: 300px; height: 300px; border: 2px solid var(--secondary); position: relative; background: radial-gradient(#334155 1px, transparent 1px); background-size: 20px 20px; }
+        .axis-x { position: absolute; bottom: 0; left: 0; width: 100%; height: 2px; background: #475569; }
+        .axis-y { position: absolute; bottom: 0; left: 0; width: 2px; height: 100%; background: #475569; }
+        .vector-point { width: 16px; height: 16px; border-radius: 50%; position: absolute; transform: translate(-50%, 50%); cursor: grab; z-index: 10; }
+        .vector-line { position: absolute; bottom: 0; left: 0; height: 2px; transform-origin: 0 50%; pointer-events: none; }
+        .math-box { flex: 1; font-family: 'Courier New', monospace; background: #1e293b; padding: 20px; border-radius: 8px; font-size: 0.9em; }
+
+        /* 其他通用 */
+        .bar-chart { display: flex; align-items: flex-end; height: 200px; gap: 5px; margin-top: 20px; }
+        .bar { flex: 1; background: var(--accent); border-radius: 4px 4px 0 0; transition: height 0.5s; opacity: 0.7; }
+        
+        .target-container { position: relative; width: 350px; height: 350px; margin: 20px auto; border-radius: 50%; background: repeating-radial-gradient(#334155 0, #334155 2px, transparent 4px, transparent 40px); border: 2px solid #475569; display: flex; align-items: center; justify-content: center; }
+        .bullseye { width: 20px; height: 20px; background: var(--success); border-radius: 50%; position: relative; z-index: 10; box-shadow: 0 0 20px var(--success); }
+        .arrow-point { position: absolute; background: white; color: black; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; transition: all 0.5s; transform: translate(-50%, -50%); }
+
+        .book-rec-container { display: flex; gap: 20px; align-items: center; justify-content: center; }
+        .book-card { width: 110px; height: 150px; background: linear-gradient(135deg, #475569, #1e293b); border: 1px solid #64748b; border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 10px; transition: all 0.3s; position: relative; font-size: 0.9em; }
+        .book-card.source { border: 2px solid var(--accent); box-shadow: 0 0 15px rgba(99, 102, 241, 0.3); }
+        .book-card.match { border-color: var(--success); }
+        .book-card.nomatch { opacity: 0.3; }
+
+        .compare-box { display: flex; gap: 20px; }
+        .compare-item { flex: 1; padding: 20px; border-radius: 8px; text-align: center; cursor: pointer; border: 2px solid transparent; }
+        .compare-item.bad { background: rgba(239, 68, 68, 0.1); border-color: #ef4444; }
+        .compare-item.good { background: rgba(34, 197, 94, 0.1); border-color: #22c55e; }
+
+        /* 讲师小抄 */
+        .notes-btn { position: fixed; bottom: 20px; right: 20px; background: var(--accent); color: white; padding: 10px 20px; border-radius: 30px; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.3); font-weight: bold; z-index: 100; }
+        .notes-panel { position: fixed; bottom: 80px; right: 20px; width: 350px; background: white; color: #1e293b; padding: 20px; border-radius: 12px; box-shadow: 0 10px 25px rgba(0,0,0,0.5); display: none; border-left: 5px solid var(--accent); z-index: 100; }
+
+        button { background: var(--accent); color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; margin-top: 10px; }
+        button:hover { opacity: 0.9; }
+        .formula { font-style: italic; color: #94a3b8; font-size: 1.1em; text-align: center; margin: 10px 0; }
+    </style>
+</head>
+<body>
+
+<!-- 侧边导航 -->
+<div class="sidebar">
+    <div style="color:white; font-weight:bold; margin-bottom:30px; font-size:1.1em;">🔍 向量技术内训 v5.0</div>
+    <div class="nav-item active" onclick="showSlide(0)">0. 基础概念：Embedding</div>
+    <div class="nav-item" onclick="showSlide(1)">1. 核心疑惑：独立计算</div>
+    <div class="nav-item" onclick="showSlide(2)">2. 对比：旧映射 vs 新向量</div>
+    <div class="nav-item" onclick="showSlide(3)">3. 维度解密：盲品红酒</div>
+    <div class="nav-item" onclick="showSlide(4)">4. 原理：2D坐标与公式</div>
+    <div class="nav-item" onclick="showSlide(5)">5. 深度：方向 vs 距离</div>
+    <div class="nav-item" onclick="showSlide(6)">6. 精准度：CEO vs Boss</div>
+    <div class="nav-item" onclick="showSlide(7)">7. 组合词：1+1 > 2</div>
+    <div class="nav-item" onclick="showSlide(8)">8. 场景：以书搜书</div>
+    <div class="nav-item" onclick="showSlide(9)">9. 进阶：书本向量策略</div> <!-- NEW -->
+    <div class="nav-item" onclick="showSlide(10)">10. 性能：会不会卡？</div>
+</div>
+
+<!-- 主内容 -->
+<div class="main">
+
+    <!-- Slide 0: 概念解释 (直观版) -->
+    <div class="slide active">
+        <h1>0. 什么是 Embedding (嵌入)？</h1>
+        <p class="subtitle">通俗理解：给文字办一张“数字身份证”</p>
+        <div class="concept-box">
+            <div style="text-align:center;">
+                <div class="concept-icon">👑</div>
+                <h3>人类语言</h3>
+                <p style="color:#94a3b8">"霸道总裁"</p>
+            </div>
+            <div class="arrow-anim">➡️ 翻译 ➡️</div>
+            <div style="text-align:center;">
+                <div class="concept-icon">🔢</div>
+                <h3>机器语言</h3>
+                <div class="data-block">[0.12, 0.98, -0.55...]</div>
+            </div>
+        </div>
+        <div class="card" style="margin-top:20px;">
+            <h3>为什么需要它？</h3>
+            <p>计算机无法直接理解“霸道”和“冷酷”是相近的。但通过 Embedding 翻译成坐标后，<strong>它们的数学距离非常近</strong>。</p>
+            <p>这让计算机拥有了<strong>“懂语义”</strong>的能力，而不仅仅是“比对字面”。</p>
+        </div>
+    </div>
+
+    <!-- Slide 1: 独立计算疑惑 -->
+    <div class="slide">
+        <h1>1. 为什么分开算，它们还认识？</h1>
+        <p class="subtitle">疑惑：标签是分开给AI的，为什么“CEO”和“总裁”知道它们是一伙的？</p>
+        <div class="card">
+            <h3>🤖 AI 是在“读书”中学会的</h3>
+            <div style="background:#0f172a; padding:15px; border-radius:8px; font-family:monospace; margin:15px 0;">
+                句子A：只有 <span style="color:#f59e0b">CEO</span> 才能签署合同。<br>
+                句子B：只有 <span style="color:#22c55e">总裁</span> 才能签署合同。<br>
+                句子C：只有 <span style="color:#ef4444">香蕉</span> 才能签署合同。（❌ 没见过）
+            </div>
+            <p><strong>结论：</strong> AI 的坐标系是固定的。只要用法像，坐标就挨得近。</p>
+        </div>
+        <div class="card" style="text-align:center;">
+            <p>点击测试新词：</p>
+            <button onclick="checkNewWord('显眼包')">测试“显眼包”</button>
+            <button onclick="checkNewWord('咕噜咪')">测试“咕噜咪”</button>
+            <p id="wordResult" style="margin-top:10px; height:20px; color:#94a3b8;"></p>
+        </div>
+    </div>
+
+    <!-- Slide 2: 对比 -->
+    <div class="slide">
+        <h1>2. 技术路线对比</h1>
+        <div class="vs-container">
+            <div class="vs-box vs-old">
+                <h3 style="color:var(--danger)">❌ 传统人工映射</h3>
+                <p>Map: { "CEO": "总裁" }</p>
+                <p><strong>缺点：</strong> 维护累、漏词、死板。</p>
+            </div>
+            <div class="vs-box vs-new">
+                <h3 style="color:var(--success)">✅ 向量语义搜索</h3>
+                <p>Dist(CEO, 总裁) = 0.02</p>
+                <p><strong>优势：</strong> 全自动、懂语义、有分数。</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 3: 维度解密 -->
+    <div class="slide">
+        <h1>3. 维度黑盒</h1>
+        <p class="subtitle">疑惑：返回1500个数字，凭什么算相似？</p>
+        <div class="card">
+            <h3>🍷 比喻：千人盲品团</h3>
+            <div style="display:flex; justify-content:space-around; margin-bottom:10px;">
+                <button onclick="renderBars('prince')">我是太子</button>
+                <button onclick="renderBars('heir')">我是世子</button>
+                <button onclick="renderBars('cola')">我是可乐</button>
+            </div>
+            <div class="bar-chart" id="barChart"></div>
+            <p id="barText" style="text-align:center; margin-top:10px; color:#94a3b8;"></p>
+        </div>
+    </div>
+
+    <!-- Slide 4: 余弦原理 -->
+    <div class="slide">
+        <h1>4. 数学原理：2D演示</h1>
+        <div class="card">
+            <p>拖动点，让它们方向一致，分数变高。</p>
+            <div class="coord-demo">
+                <div class="coord-system" id="coordSystem">
+                    <div class="axis-x"></div> <div class="axis-y"></div>
+                    <div class="vector-line" id="lineA" style="background:var(--success); width:0; transform:rotate(0deg);"></div>
+                    <div class="vector-point" id="pointA" style="background:var(--success); bottom:150px; left:150px;"></div>
+                    <div class="vector-line" id="lineB" style="background:var(--warning); width:0; transform:rotate(0deg);"></div>
+                    <div class="vector-point" id="pointB" style="background:var(--warning); bottom:150px; left:150px;"></div>
+                </div>
+                <div class="math-box">
+                    <div class="formula">Similarity = cos(θ)=A·B/||A||*||B||</div>
+                    <div style="margin-top:20px; font-size:1.2em;">
+                        夹角: <span id="angleVal" style="color:#94a3b8">0°</span><br>
+                        <strong>相似度: <span id="simVal" style="font-size:1.5em;">0.00</span></strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 5: 深度疑惑 -->
+    <div class="slide">
+        <h1>5. 深度：方向 vs 距离</h1>
+        <p class="subtitle">疑惑：(1,1)和(100,100)隔很远，为啥相似度是1？</p>
+        <div class="card">
+            <h3>🔭 手指 vs 望远镜</h3>
+            <p>我们只在乎<strong>“主题方向”</strong>，不在乎<strong>“篇幅长短”</strong>。</p>
+            <div class="magnitude-demo">
+                <div class="mag-origin"></div>
+                <div class="mag-line-short" id="magShort"></div>
+                <div class="mag-label" style="left:80px; bottom:110px;">A: 短文本</div>
+                <div class="mag-line-long" id="magLong"></div>
+                <div class="mag-label" id="magLongLabel" style="left:200px; bottom:250px; opacity:0;">B: 长篇小说</div>
+            </div>
+            <div style="text-align:center; margin-top:20px;"><button onclick="extendVector()">延伸向量 B</button></div>
+        </div>
+    </div>
+
+    <!-- Slide 6: 精准度 -->
+    <div class="slide">
+        <h1>6. 精准度：语义包含</h1>
+        <div class="target-container">
+            <div class="bullseye" title="用户搜索词: CEO"></div>
+            <div class="arrow-point" id="ap-1" style="top:50%; left:50%; opacity:0;">Company CEO</div>
+            <div class="arrow-point" id="ap-2" style="top:20%; left:20%; opacity:0;">Chairman</div>
+            <div class="arrow-point" id="ap-3" style="top:80%; left:80%; opacity:0;">Boss</div>
+        </div>
+        <div style="text-align:center;"><button onclick="shootArrows()">发射向量</button></div>
+    </div>
+
+    <!-- Slide 7: 组合词 -->
+    <div class="slide">
+        <h1>7. 组合词：千万别拆开</h1>
+        <div class="compare-box">
+            <div class="compare-item bad" onclick="alert('错误！搜甜宠可能搜出霸凌！')">
+                <h3>🚫 拆开存</h3>
+                <p>[古代] + [女巫]</p>
+                <div style="font-size:0.9em; color:#ef4444;">语义漂移</div>
+            </div>
+            <div class="compare-item good" onclick="alert('正确！保留了特有氛围。')">
+                <h3>✅ 整体存</h3>
+                <p>[古代女巫]</p>
+                <div style="font-size:0.9em; color:#22c55e;">保留梗</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 8: 场景演示 -->
+    <div class="slide">
+        <h1>8. 场景：以书搜书 (猜你喜欢)</h1>
+        <div class="card">
+            <div class="book-rec-container">
+                <div class="book-card source"><strong>《东宫》</strong><small>古代, 权谋</small></div>
+                <div style="font-size:1.5em;">➡️</div>
+                <div style="display:flex; flex-direction:column; gap:10px;">
+                    <div class="book-card" id="bk1"><strong>《嫡女》</strong><small>古言, 宅斗</small></div>
+                    <div class="book-card" id="bk2"><strong>《星际》</strong><small>科幻, 机甲</small></div>
+                </div>
+            </div>
+            <div style="text-align:center; margin-top:20px;"><button onclick="recommendBooks()">计算相似度</button></div>
+            <p id="recResult" style="text-align:center; color:#94a3b8; margin-top:10px;"></p>
+        </div>
+    </div>
+
+    <!-- Slide 9: 进阶计算 (NEW) -->
+    <div class="slide">
+        <h1>9. 技术进阶：书本向量怎么算？</h1>
+        <p class="subtitle">策略选择：算平均值 vs 重新 Embedding</p>
+        
+        <div class="vs-container">
+            <div class="vs-box vs-plan-a">
+                <h3 style="color:var(--purple)">✅ 方案 A：加权平均 (推荐)</h3>
+                <p><strong>做法：</strong> (标签A×1.5 + 标签B×1.0) / 总数</p>
+                <p><strong>优点：</strong> 免费、极速、权重可调。</p>
+            </div>
+            <div class="vs-box vs-plan-b">
+                <h3 style="color:#94a3b8">方案 B：重新 Embedding</h3>
+                <p><strong>做法：</strong> 标签拼成句子发给 AI。</p>
+                <p><strong>缺点：</strong> 费钱、不可拆分。</p>
+            </div>
+        </div>
+
+        <div class="card" style="margin-top:20px;">
+            <h3>🎛️ 方案 A 模拟器：调出一杯“好酒”</h3>
+            <p>通过调整不同标签的权重，我们可以改变这本小说的“最终风味”（向量）。</p>
+            
+            <div class="mixer-container">
+                <div class="mixer-controls">
+                    <div class="slider-group">
+                        <div class="slider-label"><span style="color:#f59e0b">题材 (古代)</span> <span id="valGenre">1.0</span></div>
+                        <input type="range" min="0" max="3" step="0.1" value="1.0" oninput="updateMixer()" id="inputGenre">
+                    </div>
+                    <div class="slider-group">
+                        <div class="slider-label"><span style="color:#22c55e">人设 (腹黑)</span> <span id="valChar">1.0</span></div>
+                        <input type="range" min="0" max="3" step="0.1" value="1.0" oninput="updateMixer()" id="inputChar">
+                    </div>
+                </div>
+                
+                <div class="mixer-visual">
+                    <div class="vector-bar-box">
+                        <div class="vector-fill" id="mixFill" style="height: 50%; background-color: #6366f1;"></div>
+                        <div class="vector-val" id="mixLabel">均衡</div>
+                    </div>
+                    <div style="margin-top:10px; font-size:0.9em; color:#94a3b8;">书本最终向量</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Slide 10: 性能 -->
+    <div class="slide">
+        <h1>10. 性能优化</h1>
+        <div class="card">
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:20px;">
+                <div style="border-right:1px solid #334155;"><h4 style="color:var(--warning)">直连 API</h4><p>600ms (慢)</p></div>
+                <div style="border-right:1px solid #334155;"><h4 style="color:var(--success)">Redis 缓存</h4><p>5ms (推荐)</p></div>
+                <div><h4 style="color:var(--info)">本地模型</h4><p>20ms (极速)</p></div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- 讲师小抄 -->
+<div class="notes-btn" onclick="toggleNotes()">👨‍🏫 讲师小抄</div>
+<div class="notes-panel" id="notesPanel">
+    <h4 style="margin-top:0;">🗣️ 这一页怎么讲？</h4>
+    <p id="noteContent"></p>
+</div>
+
+<script>
+    // --- 核心逻辑 ---
+    const slides = document.querySelectorAll('.slide');
+    const navItems = document.querySelectorAll('.nav-item');
+    const noteContent = document.getElementById('noteContent');
+
+    const notes = [
+        "开场白：Embedding 就是‘数字身份证’。它把文字翻译成坐标，让电脑能计算‘意思’。",
+        "重点：AI靠上下文学习。不用教它CEO=总裁，它看多了就知道这两个词总出现在相似的句子里。",
+        "重点：对比旧方案死板，新方案灵活且全自动。",
+        "重点：盲品比喻。只要‘打分趋势’一样，就是同类。",
+        "重点：演示2D坐标。只看夹角，不看长短。",
+        "重点解释：手指vs望远镜。(1,1)和(100,100)方向一致，所以主题一致，长度不影响相似度。",
+        "重点：亲疏远近。包含关系最近，上位词较远。",
+        "重点：语义漂移。拆开‘古代女巫’可能搜出‘校园霸凌’。",
+        "重点：以书搜书原理，把标签打包。",
+        "重点（新）：计算策略。推荐‘加权平均’。比如我觉得‘题材’最重要，就给它乘以1.5的权重，这样算出来的书本向量更准。", // Slide 9
+        "重点：缓存能解决90%延迟问题。"
+    ];
+
+    function showSlide(index) {
+        slides.forEach(s => s.classList.remove('active'));
+        navItems.forEach(n => n.classList.remove('active'));
+        slides[index].classList.add('active');
+        navItems[index].classList.add('active');
+        noteContent.innerText = notes[index];
+    }
+    showSlide(0);
+
+    function toggleNotes() {
+        const panel = document.getElementById('notesPanel');
+        panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+    }
+
+    // --- Slide 1 逻辑 ---
+    function checkNewWord(word) {
+        const result = document.getElementById('wordResult');
+        if(word === '显眼包') {
+            result.innerText = "✅ AI 认识！≈搞笑/社牛。"; result.style.color = "var(--success)";
+        } else {
+            result.innerText = "❌ AI 不认识。拆成‘咕’‘噜’‘咪’。"; result.style.color = "var(--warning)";
+        }
+    }
+
+    // --- Slide 3 逻辑 ---
+    function renderBars(type) {
+        const container = document.getElementById('barChart');
+        const text = document.getElementById('barText');
+        container.innerHTML = '';
+        let pattern = [];
+        if(type === 'prince') pattern = [20, 80, 90, 30, 10, 85, 90, 20];
+        if(type === 'heir')   pattern = [25, 78, 88, 35, 12, 82, 92, 22]; 
+        if(type === 'cola')   pattern = [90, 10, 5, 80, 90, 5, 10, 90]; 
+        pattern.forEach(h => {
+            const bar = document.createElement('div');
+            bar.className = 'bar'; bar.style.height = h + '%'; bar.style.width = '10%'; container.appendChild(bar);
+        });
+        text.innerText = type==='heir'?"看！波形几乎一样！":"看！完全不一样。";
+    }
+
+    // --- Slide 4 逻辑 (2D坐标) ---
+    const pointA = document.getElementById('pointA'); const pointB = document.getElementById('pointB');
+    const lineA = document.getElementById('lineA'); const lineB = document.getElementById('lineB');
+    const system = document.getElementById('coordSystem');
+    let isDragging = null;
+    updateVector('A', 200, 220); updateVector('B', 100, 220);
+
+    function updateVector(target, x, y) {
+        x = Math.max(0, Math.min(300, x)); y = Math.max(0, Math.min(300, y));
+        const point = target === 'A' ? pointA : pointB;
+        point.style.left = x + 'px'; point.style.bottom = y + 'px';
+        const cartX = x; const cartY = y; 
+        const line = target === 'A' ? lineA : lineB;
+        const len = Math.sqrt(cartX*cartX + cartY*cartY);
+        const angle = Math.atan2(cartY, cartX) * 180 / Math.PI;
+        line.style.width = len + 'px'; line.style.transform = `rotate(${-angle}deg)`; line.style.bottom='0px'; line.style.left='0px';
+        point.dataset.x = cartX; point.dataset.y = cartY;
+        calculateSim();
+    }
+    
+    function calculateSim() {
+        const ax = parseFloat(pointA.dataset.x), ay = parseFloat(pointA.dataset.y);
+        const bx = parseFloat(pointB.dataset.x), by = parseFloat(pointB.dataset.y);
+        const dot = ax*bx + ay*by;
+        const magA = Math.sqrt(ax*ax + ay*ay); const magB = Math.sqrt(bx*bx + by*by);
+        if(magA === 0 || magB === 0) return;
+        let cosSim = dot / (magA * magB); cosSim = Math.max(-1, Math.min(1, cosSim));
+        const angleDeg = Math.acos(cosSim) * 180 / Math.PI;
+        document.getElementById('simVal').innerText = cosSim.toFixed(3);
+        document.getElementById('angleVal').innerText = angleDeg.toFixed(1) + '°';
+        const simEl = document.getElementById('simVal');
+        if(cosSim > 0.9) simEl.style.color = 'var(--success)'; else if(cosSim < 0.5) simEl.style.color = 'var(--danger)'; else simEl.style.color = 'var(--warning)';
+    }
+
+    system.addEventListener('mousedown', (e) => { if(e.target.classList.contains('vector-point')) isDragging = e.target.id === 'pointA' ? 'A' : 'B'; });
+    window.addEventListener('mouseup', () => isDragging = null);
+    system.addEventListener('mousemove', (e) => {
+        if(!isDragging) return; const rect = system.getBoundingClientRect();
+        updateVector(isDragging, e.clientX - rect.left, rect.bottom - e.clientY);
+    });
+
+    // --- Slide 5 逻辑 ---
+    function extendVector() {
+        document.getElementById('magLong').style.width = '300px'; 
+        setTimeout(() => { document.getElementById('magLongLabel').style.opacity = 1; }, 800);
+    }
+
+    // --- Slide 6 逻辑 ---
+    function shootArrows() {
+        ['ap-1', 'ap-2', 'ap-3'].forEach(id => {
+            const el = document.getElementById(id); el.style.opacity = 0; el.style.top=Math.random()>.5?'0%':'100%'; el.style.left=Math.random()>.5?'0%':'100%';
+        });
+        setTimeout(() => { moveArrow('ap-1', '52%', '48%'); moveArrow('ap-2', '35%', '35%'); moveArrow('ap-3', '70%', '70%'); }, 100);
+    }
+    function moveArrow(id, t, l) { const el = document.getElementById(id); el.style.opacity = 1; el.style.top = t; el.style.left = l; }
+
+    // --- Slide 8 逻辑 ---
+    function recommendBooks() {
+        document.getElementById('recResult').innerText = "计算中...";
+        setTimeout(() => {
+            document.getElementById('bk1').classList.add('match'); document.getElementById('bk2').classList.add('nomatch');
+            document.getElementById('recResult').innerText = "✅ 推荐：《嫡女归来》"; document.getElementById('recResult').style.color = "var(--success)";
+        }, 600);
+    }
+
+    // --- Slide 9 逻辑 (Mixer) ---
+    function updateMixer() {
+        const wGenre = parseFloat(document.getElementById('inputGenre').value);
+        const wChar = parseFloat(document.getElementById('inputChar').value);
+        document.getElementById('valGenre').innerText = wGenre.toFixed(1);
+        document.getElementById('valChar').innerText = wChar.toFixed(1);
+
+        const fill = document.getElementById('mixFill');
+        const label = document.getElementById('mixLabel');
+
+        // 模拟混合效果：Genre 倾向黄色/高，Character 倾向绿色/低
+        // 简单映射到高度和颜色
+        const total = wGenre + wChar;
+        const ratio = total === 0 ? 0.5 : wGenre / total; // 0 (全人设) -> 1 (全题材)
+        
+        // 颜色插值: Green(Char) -> Orange(Genre)
+        // Green: hue 142, Orange: hue 32
+        const hue = 142 - (ratio * (142 - 32)); 
+        const height = 30 + (ratio * 50); // height change demo
+
+        fill.style.backgroundColor = `hsl(${hue}, 70%, 50%)`;
+        fill.style.height = `${height}%`;
+
+        if(ratio > 0.7) label.innerText = "题材主导";
+        else if(ratio < 0.3) label.innerText = "人设主导";
+        else label.innerText = "均衡混合";
+    }
+</script>
+
+</body>
+</html>
+
+    

@@ -1,0 +1,3 @@
+# Environment files (secrets - never commit)
+.env
+.env.local
